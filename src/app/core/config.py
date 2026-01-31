@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     supabase_jwks_url: str | None = None
     supabase_aud: str | None = None
     jwks_cache_ttl: int = 3600
+    jwks_ready_timeout: int = 2  # seconds for readiness check
 
     class Config:
         env_file = ".env"
