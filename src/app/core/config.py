@@ -7,11 +7,13 @@ class Settings(BaseSettings):
 
     # Supabase / Auth
     supabase_url: str | None = None
-    supabase_iss: str | None = None
-    supabase_jwks_url: str | None = None
-    supabase_aud: str | None = None
+    supabase_iss: str 
+    supabase_jwks_url: str
+    supabase_aud: str = "authenticated"
     jwks_cache_ttl: int = 3600
     jwks_ready_timeout: int = 2  # seconds for readiness check
-
+    
     class Config:
         env_file = ".env"
+
+settings = Settings()

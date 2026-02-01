@@ -5,12 +5,12 @@ from typing import Any, Dict, Optional
 
 import httpx
 from jose import jwt, JWTError
-from fastapi import Depends, Header, HTTPException
+from fastapi import Header, HTTPException
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 
-from .config import Settings
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def _jwk_to_pem(jwk: Dict[str, Any]) -> bytes:
     return pem
 
 
-async def _fetch_jwks(settings: Settings) -> Dict[str, Any]:
+async def _fetch_jwks() -> Dict[str, Any]:
     now = int(time.time())
     if _jwks_cache["keys"] and _jwks_cache["expires_at"] > now:
         return _jwks_cache["keys"]
@@ -59,15 +59,15 @@ async def _fetch_jwks(settings: Settings) -> Dict[str, Any]:
     return data
 
 
-async def _get_jwk_by_kid(kid: str, settings: Settings) -> Optional[Dict[str, Any]]:
-    jwks = await _fetch_jwks(settings)
+async def _get_jwk_by_kid(kid: str) -> Optional[Dict[str, Any]]:
+    jwks = await _fetch_jwks()
     for key in jwks.get("keys", []):
         if key.get("kid") == kid:
             return key
     return None
 
 
-async def verify_jwt(token: str, settings: Settings) -> Dict[str, Any]:
+async def verify_jwt(token: str) -> Dict[str, Any]:
     try:
         header = jwt.get_unverified_header(token)
     except JWTError as exc:
@@ -78,7 +78,7 @@ async def verify_jwt(token: str, settings: Settings) -> Dict[str, Any]:
     if not kid:
         raise HTTPException(status_code=401, detail="Token missing kid header")
 
-    jwk = await _get_jwk_by_kid(kid, settings)
+    jwk = await _get_jwk_by_kid(kid)
     if not jwk:
         raise HTTPException(status_code=401, detail="Unknown kid")
 
@@ -99,7 +99,7 @@ async def verify_jwt(token: str, settings: Settings) -> Dict[str, Any]:
 
 
 async def get_current_user(
-    authorization: Optional[str] = Header(None), settings: Settings = Depends(Settings)
+    authorization: Optional[str] = Header(None),
 ) -> User:
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
@@ -109,7 +109,7 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Invalid Authorization header format")
 
     token = parts[1]
-    payload = await verify_jwt(token, settings)
+    payload = await verify_jwt(token)
 
     user = User(
         sub=payload.get("sub"),

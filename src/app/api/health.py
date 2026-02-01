@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 import httpx
 
-from ..core.config import Settings
+from ..core.config import settings
 
 class HealthResponse(BaseModel):
     status: str = "ok"
@@ -16,7 +16,7 @@ async def health():
 
 
 @router.get("/health/ready", tags=["health"])
-async def health_ready(settings: Settings = Depends(Settings)):
+async def health_ready():
     """Readiness check: optionally verifies JWKS endpoint with a short timeout.
 
     - Public endpoint
