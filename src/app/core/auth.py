@@ -1,20 +1,31 @@
-import time
-import base64
 import logging
 from typing import Any, Dict, Optional
 
-import httpx
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWKClient, PyJWKClientConnectionError, PyJWKClientError
 from fastapi import Header, HTTPException
 from pydantic import BaseModel
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
-_jwks_cache: Dict[str, Any] = {"keys": None, "expires_at": 0}
+_ALLOWED_ALGORITHMS = ["RS256", "ES256", "ES384", "ES512"]
+
+_jwk_client: Optional[PyJWKClient] = None
+
+
+def _get_jwk_client() -> PyJWKClient:
+    """Lazy-init a PyJWKClient with built-in JWKS caching."""
+    global _jwk_client
+    if _jwk_client is None:
+        _jwk_client = PyJWKClient(
+            settings.supabase_jwks_url,
+            cache_jwk_set=True,
+            lifespan=settings.jwks_cache_ttl,
+        )
+    return _jwk_client
+
 
 class User(BaseModel):
     sub: str
@@ -23,79 +34,58 @@ class User(BaseModel):
     aal: Optional[Any] = None
 
 
-def _b64url_to_int(val: str) -> int:
-    pad = "=" * (-len(val) % 4)
-    data = base64.urlsafe_b64decode(val + pad)
-    return int.from_bytes(data, "big")
-
-
-def _jwk_to_pem(jwk: Dict[str, Any]) -> bytes:
-    # Convert RSA JWK (n, e) to PEM public key
-    n = _b64url_to_int(jwk["n"])
-    e = _b64url_to_int(jwk["e"])
-    public_numbers = rsa.RSAPublicNumbers(e, n)
-    public_key = public_numbers.public_key()
-    pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return pem
-
-
-async def _fetch_jwks() -> Dict[str, Any]:
-    now = int(time.time())
-    if _jwks_cache["keys"] and _jwks_cache["expires_at"] > now:
-        return _jwks_cache["keys"]
-
-    url = settings.supabase_jwks_url
-    logger.info("Fetching JWKS from %s", url)
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        data = r.json()
-
-    _jwks_cache["keys"] = data
-    _jwks_cache["expires_at"] = now + int(settings.jwks_cache_ttl)
-    return data
-
-
-async def _get_jwk_by_kid(kid: str) -> Optional[Dict[str, Any]]:
-    jwks = await _fetch_jwks()
-    for key in jwks.get("keys", []):
-        if key.get("kid") == kid:
-            return key
-    return None
-
-
 async def verify_jwt(token: str) -> Dict[str, Any]:
+    client = _get_jwk_client()
+
+    # --- 1. Read header (no verification yet) ---
     try:
         header = jwt.get_unverified_header(token)
-    except JWTError as exc:
+    except jwt.DecodeError as exc:
         logger.debug("Invalid JWT header: %s", exc)
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    alg = header.get("alg")
     kid = header.get("kid")
-    if not kid:
-        raise HTTPException(status_code=401, detail="Token missing kid header")
 
-    jwk = await _get_jwk_by_kid(kid)
-    if not jwk:
-        raise HTTPException(status_code=401, detail="Unknown kid")
+    if settings.app_env == "development":
+        logger.debug("[auth:diag] JWT header -> alg=%s, kid=%s", alg, kid)
 
-    pem = _jwk_to_pem(jwk)
+    if alg not in _ALLOWED_ALGORITHMS:
+        logger.warning("[auth] Rejected token with alg=%s (allowed: %s)", alg, _ALLOWED_ALGORITHMS)
+        raise HTTPException(status_code=401, detail="Invalid token")
 
+    # --- 2. Resolve signing key from JWKS by kid ---
+    try:
+        signing_key = client.get_signing_key_from_jwt(token)
+    except PyJWKClientConnectionError as exc:
+        logger.error("[auth] JWKS fetch error: %s", exc)
+        raise HTTPException(status_code=503, detail="JWKS unavailable")
+    except (PyJWKClientError, jwt.DecodeError) as exc:
+        logger.warning("[auth] Failed to resolve signing key: %s", exc)
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if settings.app_env == "development":
+        logger.debug(
+            "[auth:diag] Resolved signing key type=%s for kid=%s",
+            type(signing_key.key).__name__, kid,
+        )
+
+    # --- 3. Decode & verify ---
     try:
         payload = jwt.decode(
             token,
-            pem,
-            algorithms=["RS256"],
+            signing_key.key,
+            algorithms=_ALLOWED_ALGORITHMS,
             audience=settings.supabase_aud,
             issuer=settings.supabase_iss,
         )
         return payload
-    except JWTError as exc:
+    except jwt.ExpiredSignatureError:
+        logger.debug("JWT expired")
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError as exc:
         logger.debug("JWT verification failed: %s", exc)
-        raise HTTPException(status_code=401, detail="Token verification failed")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 async def get_current_user(
@@ -109,7 +99,14 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Invalid Authorization header format")
 
     token = parts[1]
-    payload = await verify_jwt(token)
+
+    try:
+        payload = await verify_jwt(token)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[auth] Unexpected error during token verification: %s", exc)
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     user = User(
         sub=payload.get("sub"),
