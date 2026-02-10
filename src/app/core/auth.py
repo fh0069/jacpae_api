@@ -13,17 +13,19 @@ logger = logging.getLogger(__name__)
 _ALLOWED_ALGORITHMS = ["RS256", "ES256", "ES384", "ES512"]
 
 _jwk_client: Optional[PyJWKClient] = None
+_jwk_client_url: Optional[str] = None
 
 
 def _get_jwk_client() -> PyJWKClient:
     """Lazy-init a PyJWKClient with built-in JWKS caching."""
-    global _jwk_client
-    if _jwk_client is None:
+    global _jwk_client, _jwk_client_url
+    if _jwk_client is None or _jwk_client_url != settings.supabase_jwks_url:
         _jwk_client = PyJWKClient(
             settings.supabase_jwks_url,
             cache_jwk_set=True,
             lifespan=settings.jwks_cache_ttl,
         )
+        _jwk_client_url = settings.supabase_jwks_url
     return _jwk_client
 
 
@@ -108,8 +110,12 @@ async def get_current_user(
         logger.error("[auth] Unexpected error during token verification: %s", exc)
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    sub = payload.get("sub")
+    if not sub:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
     user = User(
-        sub=payload.get("sub"),
+        sub=sub,
         email=payload.get("email"),
         role=payload.get("role"),
         aal=payload.get("aal"),
