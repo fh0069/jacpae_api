@@ -77,26 +77,14 @@ async def execute_query(query: str, params: dict[str, Any] | None = None) -> lis
     Execute a SELECT query and return results as list of dicts.
 
     Args:
-        query: SQL query with named parameters (e.g., :param_name)
+        query: SQL query with pyformat parameters (e.g., %(param_name)s)
         params: Dictionary of parameters
 
     Returns:
         List of row dictionaries
     """
-    import re
-
     async with get_connection() as conn:
         async with conn.cursor(DictCursor) as cursor:
-            if params:
-                # Find all :param_name in order of appearance
-                param_pattern = re.compile(r":(\w+)")
-                param_names = param_pattern.findall(query)
-                # Build values list in order of appearance
-                param_values = [params[name] for name in param_names]
-                # Replace :name with %s
-                converted_query = param_pattern.sub("%s", query)
-                await cursor.execute(converted_query, param_values)
-            else:
-                await cursor.execute(query)
+            await cursor.execute(query, params or {})
             rows = await cursor.fetchall()
             return list(rows)

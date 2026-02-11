@@ -20,17 +20,17 @@ INNER JOIN pie_venta_e p ON
   c.serie_factura = p.serie AND
   c.numero_factura = p.numero
 WHERE
-  c.ejercicio_factura IN (:ejercicio_actual, :ejercicio_anterior)
+  c.ejercicio_factura IN (%(ejercicio_actual)s, %(ejercicio_anterior)s)
   AND c.clave_factura = 'B'
-  AND c.documento_factura NOT LIKE 'J%'
-  AND c.clt_prov = :clt_prov
+  AND c.documento_factura NOT LIKE 'J%%'
+  AND c.clt_prov = %(clt_prov)s
 GROUP BY
   c.documento_factura,
   c.numero_factura
 ORDER BY
   fecha DESC,
   factura ASC
-LIMIT :limit OFFSET :offset
+LIMIT %(limit)s OFFSET %(offset)s
 """
 
 
