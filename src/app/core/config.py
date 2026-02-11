@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     jwks_cache_ttl: int = 3600
     jwks_ready_timeout: int = 2  # seconds for readiness check
 
+    # PDF / NAS
+    pdf_base_dir: str = "./_pdfs/invoices_issued"
+
     # MariaDB (required - no defaults)
     mariadb_host: str = "127.0.0.1"
     mariadb_port: int = 3306
