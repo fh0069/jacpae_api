@@ -6,6 +6,7 @@ Security flow:
 2. Fetch customer_profile from Supabase → get erp_clt_prov
 3. Query MariaDB with erp_clt_prov (NEVER from client)
 """
+import base64
 from datetime import date
 import logging
 
@@ -21,7 +22,44 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["invoices"])
 
 
+def build_invoice_id(row: dict) -> str:
+    """Encode invoice PK fields into an opaque base64url token."""
+    raw = (
+        f"{row['ejercicio_factura']}|{row['clave_factura']}"
+        f"|{row['documento_factura']}|{row['serie_factura']}"
+        f"|{row['numero_factura']}"
+    )
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_invoice_id(invoice_id: str) -> dict:
+    """Decode a base64url invoice_id back into its component fields.
+
+    Returns dict with keys: ejercicio, clave, documento, serie, numero.
+    Raises ValueError on invalid format.
+    """
+    # Restore padding
+    padded = invoice_id + "=" * (-len(invoice_id) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded).decode()
+    except Exception as exc:
+        raise ValueError(f"Cannot decode invoice_id: {exc}") from exc
+
+    parts = raw.split("|")
+    if len(parts) != 5:
+        raise ValueError(f"Expected 5 fields, got {len(parts)}")
+
+    return {
+        "ejercicio": parts[0],
+        "clave": parts[1],
+        "documento": parts[2],
+        "serie": parts[3],
+        "numero": parts[4],
+    }
+
+
 class Invoice(BaseModel):
+    invoice_id: str
     factura: str
     fecha: date
     base_imponible: float
@@ -77,5 +115,9 @@ async def get_invoices(
     except Exception as e:
         logger.error("Database error fetching invoices: %s", type(e).__name__)
         raise HTTPException(status_code=500, detail="Error fetching invoices")
+
+    # Enrich each row with an opaque invoice_id
+    for row in rows:
+        row["invoice_id"] = build_invoice_id(row)
 
     return rows
