@@ -7,6 +7,7 @@ from .api.health import router as health_router
 from .api.me import router as me_router
 from .api.invoices import router as invoices_router
 from .api.invoice_pdf import router as invoice_pdf_router
+from .api.notifications import router as notifications_router
 from .core.logging import configure_logging, RequestLoggingMiddleware
 from .core.config import settings
 from .core.mariadb import close_pools
@@ -75,6 +76,7 @@ app.include_router(health_router)
 app.include_router(me_router)
 app.include_router(invoices_router)
 app.include_router(invoice_pdf_router)
+app.include_router(notifications_router)
 
 # Debug endpoints (development only)
 if settings.app_env == "development":

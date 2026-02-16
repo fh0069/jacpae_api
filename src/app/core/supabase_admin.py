@@ -1,16 +1,17 @@
 """
 Supabase Admin Client - Uses SERVICE_ROLE_KEY to query customer_profiles
-and insert notifications.
+and manage notifications.
 
 SECURITY: This module uses SUPABASE_SERVICE_ROLE_KEY which bypasses RLS.
            NEVER expose this key in logs, responses, or client-side code.
 """
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 from dataclasses import dataclass
 
 import httpx
+from pydantic import BaseModel
 
 from .config import settings
 
@@ -46,6 +47,16 @@ class NotificationInsert:
     event_date: date
     data: dict[str, Any]
     source_key: str
+
+
+class Notification(BaseModel):
+    id: str
+    type: str
+    title: str
+    body: Optional[str] = None
+    data: Optional[dict[str, Any]] = None
+    read_at: Optional[datetime] = None
+    created_at: datetime
 
 
 # ── Internal helpers ──────────────────────────────────────────
@@ -215,4 +226,93 @@ async def insert_notification(notification: NotificationInsert) -> bool:
         return False
     except (httpx.TimeoutException, httpx.RequestError) as e:
         logger.error("Supabase unavailable (insert_notification): %s", type(e).__name__)
+        raise SupabaseUnavailableError("Supabase request failed")
+
+
+# ── Notification read helpers ─────────────────────────────────
+
+async def fetch_notifications(
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Notification]:
+    """
+    Fetch notifications for a user, ordered by created_at DESC.
+
+    Uses SERVICE_ROLE_KEY (bypasses RLS) but filters by user_id server-side.
+    """
+    if not _check_config():
+        return []
+
+    limit = min(max(limit, 1), 100)
+    offset = max(offset, 0)
+
+    url = f"{settings.supabase_url}/rest/v1/notifications"
+    params = {
+        "user_id": f"eq.{user_id}",
+        "select": "id,type,title,body,data,read_at,created_at",
+        "order": "created_at.desc",
+        "limit": str(limit),
+        "offset": str(offset),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, params=params, headers=_get_headers())
+            response.raise_for_status()
+            data = response.json()
+            return [Notification(**row) for row in data]
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase fetch_notifications error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+        return []
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error("Supabase unavailable (fetch_notifications): %s", type(e).__name__)
+        raise SupabaseUnavailableError("Supabase request failed")
+
+
+async def mark_notification_read(user_id: str, notification_id: str) -> bool:
+    """
+    Mark a notification as read. Returns True if updated, False if not found
+    or does not belong to user.
+
+    Uses double filter (id + user_id) for safety.
+    """
+    if not _check_config():
+        return False
+
+    url = f"{settings.supabase_url}/rest/v1/notifications"
+    params = {
+        "id": f"eq.{notification_id}",
+        "user_id": f"eq.{user_id}",
+    }
+    headers = {
+        **_get_headers(),
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    payload = {
+        "read_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.patch(
+                url, params=params, json=payload, headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return len(data) > 0
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase mark_notification_read error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+        return False
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error("Supabase unavailable (mark_read): %s", type(e).__name__)
         raise SupabaseUnavailableError("Supabase request failed")
