@@ -39,6 +39,13 @@ class CustomerProfileGiro:
 
 
 @dataclass
+class CustomerProfileReparto:
+    user_id: str
+    erp_clt_prov: str
+    dias_aviso_reparto: Optional[int]
+
+
+@dataclass
 class NotificationInsert:
     user_id: str
     type: str
@@ -169,6 +176,50 @@ async def fetch_giro_profiles() -> list[CustomerProfileGiro]:
         return []
     except (httpx.TimeoutException, httpx.RequestError) as e:
         logger.error("Supabase unavailable (giro_profiles): %s", type(e).__name__)
+        raise SupabaseUnavailableError("Supabase request failed")
+
+
+async def fetch_reparto_profiles() -> list[CustomerProfileReparto]:
+    """
+    Fetch all customer profiles that have reparto notifications enabled.
+
+    Filters: is_active=true, avisar_reparto=true, erp_clt_prov not null.
+    """
+    if not _check_config():
+        return []
+
+    url = f"{settings.supabase_url}/rest/v1/customer_profiles"
+    params = {
+        "select": "user_id,erp_clt_prov,dias_aviso_reparto",
+        "is_active": "eq.true",
+        "avisar_reparto": "eq.true",
+        "erp_clt_prov": "not.is.null",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(url, params=params, headers=_get_headers())
+            response.raise_for_status()
+            data = response.json()
+
+            return [
+                CustomerProfileReparto(
+                    user_id=row["user_id"],
+                    erp_clt_prov=row["erp_clt_prov"],
+                    dias_aviso_reparto=row.get("dias_aviso_reparto"),
+                )
+                for row in data
+                if row.get("erp_clt_prov")  # skip empty strings
+            ]
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase fetch_reparto_profiles error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+        return []
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error("Supabase unavailable (reparto_profiles): %s", type(e).__name__)
         raise SupabaseUnavailableError("Supabase request failed")
 
 
