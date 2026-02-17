@@ -21,31 +21,54 @@ _scheduler = None
 
 
 def _setup_scheduler():
-    """Create and configure the APScheduler instance."""
+    """Create and configure the APScheduler instance with enabled jobs."""
     global _scheduler
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
 
-    from .jobs.giro_job import run_giro_job
-
     _scheduler = AsyncIOScheduler()
-    _scheduler.add_job(
-        run_giro_job,
-        trigger=CronTrigger(
-            hour=settings.giro_job_hour,
-            minute=settings.giro_job_minute,
-            timezone="Europe/Madrid",
-        ),
-        id="giro_job_daily",
-        name="Daily giro notification job",
-        replace_existing=True,
-    )
+
+    if settings.giro_job_enabled:
+        from .jobs.giro_job import run_giro_job
+
+        _scheduler.add_job(
+            run_giro_job,
+            trigger=CronTrigger(
+                hour=settings.giro_job_hour,
+                minute=settings.giro_job_minute,
+                timezone="Europe/Madrid",
+            ),
+            id="giro_job_daily",
+            name="Daily giro notification job",
+            replace_existing=True,
+        )
+        logger.info(
+            "Giro job scheduled at %02d:%02d Europe/Madrid",
+            settings.giro_job_hour,
+            settings.giro_job_minute,
+        )
+
+    if settings.reparto_job_enabled:
+        from .jobs.reparto_job import run_reparto_job
+
+        _scheduler.add_job(
+            run_reparto_job,
+            trigger=CronTrigger(
+                hour=settings.reparto_job_hour,
+                minute=settings.reparto_job_minute,
+                timezone="Europe/Madrid",
+            ),
+            id="reparto_job_daily",
+            name="Daily reparto notification job",
+            replace_existing=True,
+        )
+        logger.info(
+            "Reparto job scheduled at %02d:%02d Europe/Madrid",
+            settings.reparto_job_hour,
+            settings.reparto_job_minute,
+        )
+
     _scheduler.start()
-    logger.info(
-        "Giro job scheduled at %02d:%02d Europe/Madrid",
-        settings.giro_job_hour,
-        settings.giro_job_minute,
-    )
 
 
 # ── Lifespan ──────────────────────────────────────────────────
@@ -53,10 +76,11 @@ def _setup_scheduler():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    if settings.giro_job_enabled:
+    any_job_enabled = settings.giro_job_enabled or settings.reparto_job_enabled
+    if any_job_enabled:
         _setup_scheduler()
     else:
-        logger.info("Giro job disabled (GIRO_JOB_ENABLED=false)")
+        logger.info("No scheduled jobs enabled")
 
     yield
 

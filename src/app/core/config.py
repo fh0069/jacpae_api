@@ -44,5 +44,11 @@ class Settings(BaseSettings):
     giro_job_minute: int = 0
     giro_default_dias_aviso: int = 5
 
+    # Reparto notification job
+    reparto_job_enabled: bool = False
+    reparto_job_hour: int = 8
+    reparto_job_minute: int = 0
+    reparto_default_dias_aviso: int = 2
+
 
 settings = Settings()
