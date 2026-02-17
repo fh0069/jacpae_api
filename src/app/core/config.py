@@ -35,5 +35,14 @@ class Settings(BaseSettings):
     mariadb_password: SecretStr
     mariadb_db: str
 
+    # MariaDB contabilidad (misma instancia, distinto schema)
+    mariadb_finan_db: str = "g4finan"
+
+    # Giro notification job
+    giro_job_enabled: bool = False
+    giro_job_hour: int = 8
+    giro_job_minute: int = 0
+    giro_default_dias_aviso: int = 5
+
 
 settings = Settings()
