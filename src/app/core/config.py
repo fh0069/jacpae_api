@@ -50,5 +50,10 @@ class Settings(BaseSettings):
     reparto_job_minute: int = 0
     reparto_default_dias_aviso: int = 2
 
+    # Offer notification job
+    offer_job_enabled: bool = False
+    offer_job_hour: int = 8
+    offer_job_minute: int = 5
+
 
 settings = Settings()

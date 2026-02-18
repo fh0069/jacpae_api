@@ -223,6 +223,40 @@ async def fetch_reparto_profiles() -> list[CustomerProfileReparto]:
         raise SupabaseUnavailableError("Supabase request failed")
 
 
+async def fetch_active_user_ids() -> list[str]:
+    """
+    Fetch user_id for every customer profile with is_active=true.
+
+    Returns a flat list of UUID strings. Raises SupabaseUnavailableError
+    on 5xx / network errors (same pattern as the other fetch helpers).
+    """
+    if not _check_config():
+        return []
+
+    url = f"{settings.supabase_url}/rest/v1/customer_profiles"
+    params = {
+        "select": "user_id",
+        "is_active": "eq.true",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(url, params=params, headers=_get_headers())
+            response.raise_for_status()
+            data = response.json()
+            return [row["user_id"] for row in data if row.get("user_id")]
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase fetch_active_user_ids error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+        return []
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error("Supabase unavailable (fetch_active_user_ids): %s", type(e).__name__)
+        raise SupabaseUnavailableError("Supabase request failed")
+
+
 async def insert_notification(notification: NotificationInsert) -> bool:
     """
     Insert a notification into Supabase. Returns True if inserted,

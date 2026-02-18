@@ -7,6 +7,7 @@ from .api.health import router as health_router
 from .api.me import router as me_router
 from .api.invoices import router as invoices_router
 from .api.invoice_pdf import router as invoice_pdf_router
+from .api.offer_pdf import router as offer_pdf_router
 from .api.notifications import router as notifications_router
 from .core.logging import configure_logging, RequestLoggingMiddleware
 from .core.config import settings
@@ -68,6 +69,26 @@ def _setup_scheduler():
             settings.reparto_job_minute,
         )
 
+    if settings.offer_job_enabled:
+        from .jobs.offer_job import run_offer_job
+
+        _scheduler.add_job(
+            run_offer_job,
+            trigger=CronTrigger(
+                hour=settings.offer_job_hour,
+                minute=settings.offer_job_minute,
+                timezone="Europe/Madrid",
+            ),
+            id="offer_job_daily",
+            name="Daily offer notification job",
+            replace_existing=True,
+        )
+        logger.info(
+            "Offer job scheduled at %02d:%02d Europe/Madrid",
+            settings.offer_job_hour,
+            settings.offer_job_minute,
+        )
+
     _scheduler.start()
 
 
@@ -76,7 +97,11 @@ def _setup_scheduler():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    any_job_enabled = settings.giro_job_enabled or settings.reparto_job_enabled
+    any_job_enabled = (
+        settings.giro_job_enabled
+        or settings.reparto_job_enabled
+        or settings.offer_job_enabled
+    )
     if any_job_enabled:
         _setup_scheduler()
     else:
@@ -100,6 +125,7 @@ app.include_router(health_router)
 app.include_router(me_router)
 app.include_router(invoices_router)
 app.include_router(invoice_pdf_router)
+app.include_router(offer_pdf_router)
 app.include_router(notifications_router)
 
 # Debug endpoints (development only)
