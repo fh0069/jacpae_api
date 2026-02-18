@@ -1,24 +1,27 @@
 -- ============================================================
--- CHECKPOINT 1b: Crear tabla notifications + RLS
+-- 002: Crear tabla notifications + RLS
 -- Ejecutar en Supabase SQL Editor
+-- NOTA: el campo de deduplicación se llama source_key.
+--       Si partiste de una instalación previa con dedup_key,
+--       aplica primero 003_notifications_source_key.sql.
 -- ============================================================
 
 -- 1. Crear tabla
 CREATE TABLE IF NOT EXISTS public.notifications (
   id          uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id     uuid          NOT NULL,
-  type        text          NOT NULL,           -- 'giro', futuro: 'factura', etc.
+  type        text          NOT NULL,
   title       text          NOT NULL,
   body        text,
   data        jsonb         NOT NULL DEFAULT '{}'::jsonb,
-  dedup_key   text          NOT NULL,
+  source_key  text          NOT NULL,
   created_at  timestamptz   NOT NULL DEFAULT now(),
   read_at     timestamptz
 );
 
--- 2. Índice único en dedup_key (deduplicación)
-CREATE UNIQUE INDEX IF NOT EXISTS uix_notifications_dedup_key
-  ON public.notifications (dedup_key);
+-- 2. Índice único en source_key (deduplicación)
+CREATE UNIQUE INDEX IF NOT EXISTS uix_notifications_source_key
+  ON public.notifications (source_key);
 
 -- 3. Índice para queries por usuario + orden cronológico
 CREATE INDEX IF NOT EXISTS ix_notifications_user_created
