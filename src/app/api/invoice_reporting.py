@@ -1,17 +1,16 @@
 """
 Invoice Reporting API – VAT invoice list (listado fiscal de facturas).
 
-Security flow (same as /invoices):
+Security flow (same as /finance/ledger):
 1. Validate JWT → get user_id (sub claim)
-2. Fetch customer_profile from Supabase → get erp_clt_prov
-3. Query MariaDB via service/repository (NEVER expose clt_prov to client)
+2. Fetch customer_profile from Supabase → get cta_contable
+3. Query MARIADB_FINAN_DB via service/repository (NEVER expose cta_contable to client)
 
 Note: This router is intentionally separate from api/invoices.py to avoid
 modifying the existing /invoices endpoint.
 """
 import logging
 from datetime import date
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -29,25 +28,26 @@ router = APIRouter(tags=["invoices"])
 # ── Schemas ────────────────────────────────────────────────────
 
 class VatInvoiceItem(BaseModel):
-    num_fra: str
     fecha_fra: date
+    num_fra: str
     base_imp: float
-    iva: float
+    tipo_iva: float
+    cuota_iva: float
+    tipo_recargo: float
+    cuota_recargo: float
     imp_total: float
 
 
-class VatTotals(BaseModel):
-    total_base_imp: float
+class VatInvoiceTotals(BaseModel):
+    total_base: float
     total_iva: float
-    total_imp_total: float
+    total_recargo: float
+    total_factura: float
 
 
 class VatInvoiceListResponse(BaseModel):
-    start_date: date
-    end_date: date
-    total_items: int
     items: list[VatInvoiceItem]
-    totals: Optional[VatTotals] = None
+    totals: VatInvoiceTotals
 
 
 # ── Endpoint ───────────────────────────────────────────────────
@@ -63,7 +63,8 @@ async def get_vat_invoice_list_endpoint(
 
     - Requires valid Supabase JWT
     - Both start_date and end_date are required
-    - Client cannot specify clt_prov – resolved server-side from customer_profiles
+    - Client cannot specify cta_contable – resolved server-side from customer_profiles
+    - Includes aggregated period totals (base, IVA, recargo, total)
     """
     try:
         validate_date_range(start_date, end_date)
@@ -85,16 +86,16 @@ async def get_vat_invoice_list_endpoint(
         logger.warning("Customer profile is_active=false for user_id=%s", user_id)
         raise HTTPException(status_code=403, detail="Customer profile is not active")
 
-    clt_prov = profile.erp_clt_prov
+    if not profile.cta_contable:
+        logger.warning("Customer profile has no cta_contable for user_id=%s", user_id)
+        raise HTTPException(status_code=403, detail="Customer profile has no accounting account configured")
 
     try:
         result = await get_vat_invoice_list(
-            clt_prov=clt_prov,
+            cta_contable=profile.cta_contable,
             start_date=start_date,
             end_date=end_date,
         )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="VAT invoice list query not yet implemented")
     except Exception as e:
         logger.error("Database error fetching VAT invoice list: %s", type(e).__name__)
         raise HTTPException(status_code=500, detail="Error fetching VAT invoice list")
