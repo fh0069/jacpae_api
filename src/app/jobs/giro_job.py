@@ -2,7 +2,7 @@
 Daily giro notification job.
 
 Reads active customer profiles from Supabase, queries upcoming giros
-from MariaDB contabilidad (g4finan), and inserts deduplicated
+from MARIADB_FINAN_DB, and inserts deduplicated
 notifications into Supabase.
 """
 import logging

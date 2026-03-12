@@ -2,8 +2,8 @@
 MariaDB connection pools using asyncmy.
 
 Two independent pools:
-  - ventas (g4):       get_pool()       — used by invoices, existing endpoints
-  - contabilidad (g4finan): get_pool_finan() — used by giro notifications job
+  - ventas (MARIADB_DB):          get_pool()       — used by invoices, existing endpoints
+  - financial (MARIADB_FINAN_DB): get_pool_finan() — used by giro notifications job
 """
 import asyncio
 import logging
@@ -17,13 +17,13 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Ventas pool (g4) ─────────────────────────────────────────
+# ── Ventas pool (MARIADB_DB) ─────────────────────────────────
 
 _pool: asyncmy.Pool | None = None
 
 
 async def get_pool() -> asyncmy.Pool:
-    """Get or create the ventas (g4) connection pool."""
+    """Get or create the ventas (MARIADB_DB) connection pool."""
     global _pool
     if _pool is None:
         logger.info("Creating MariaDB pool [ventas] db=%s", settings.mariadb_db)
@@ -40,13 +40,13 @@ async def get_pool() -> asyncmy.Pool:
     return _pool
 
 
-# ── Contabilidad pool (g4finan) ──────────────────────────────
+# ── Contabilidad pool (MARIADB_FINAN_DB) ─────────────────────
 
 _pool_finan: asyncmy.Pool | None = None
 
 
 async def get_pool_finan() -> asyncmy.Pool:
-    """Get or create the contabilidad (g4finan) connection pool."""
+    """Get or create the financial (MARIADB_FINAN_DB) connection pool."""
     global _pool_finan
     if _pool_finan is None:
         logger.info("Creating MariaDB pool [finan] db=%s", settings.mariadb_finan_db)
@@ -122,7 +122,7 @@ async def execute_query(
     Args:
         query: SQL query with pyformat parameters (e.g., %(param_name)s)
         params: Dictionary of parameters
-        pool: Connection pool to use (defaults to ventas/g4)
+        pool: Connection pool to use (defaults to MARIADB_DB)
 
     Returns:
         List of row dictionaries

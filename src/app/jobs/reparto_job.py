@@ -2,7 +2,7 @@
 Daily reparto notification job.
 
 Reads active customer profiles from Supabase, calculates business-day
-target dates, queries scheduled routes from MariaDB gestión (g4),
+target dates, queries scheduled routes from MARIADB_DB,
 and inserts deduplicated notifications into Supabase.
 """
 import logging

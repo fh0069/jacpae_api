@@ -1,7 +1,7 @@
 """
 Reparto repository - Data access layer for scheduled route queries.
 
-Reads from MariaDB gestión (g4) via the default ventas pool.
+Reads from MARIADB_DB via the default ventas pool.
 """
 from datetime import date
 from typing import Any

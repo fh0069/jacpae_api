@@ -9,6 +9,8 @@ from .api.invoices import router as invoices_router
 from .api.invoice_pdf import router as invoice_pdf_router
 from .api.offer_pdf import router as offer_pdf_router
 from .api.notifications import router as notifications_router
+from .api.finance import router as finance_router
+from .api.invoice_reporting import router as invoice_reporting_router
 from .core.logging import configure_logging, RequestLoggingMiddleware
 from .core.config import settings
 from .core.mariadb import close_pools
@@ -127,6 +129,8 @@ app.include_router(invoices_router)
 app.include_router(invoice_pdf_router)
 app.include_router(offer_pdf_router)
 app.include_router(notifications_router)
+app.include_router(finance_router)
+app.include_router(invoice_reporting_router)
 
 # Debug endpoints (development only)
 if settings.app_env == "development":

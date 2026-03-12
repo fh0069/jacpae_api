@@ -1,7 +1,7 @@
 """
 Giro repository - Data access layer for upcoming giro/vencimiento queries.
 
-Reads from MariaDB contabilidad (g4finan) via the finan pool.
+Reads from MARIADB_FINAN_DB via the finan pool.
 """
 from datetime import date
 from typing import Any

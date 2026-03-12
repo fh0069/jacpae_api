@@ -29,6 +29,7 @@ class SupabaseUnavailableError(Exception):
 class CustomerProfile:
     erp_clt_prov: str
     is_active: bool
+    cta_contable: Optional[str] = None
 
 
 @dataclass
@@ -103,7 +104,7 @@ async def fetch_customer_profile(user_id: str) -> Optional[CustomerProfile]:
     url = f"{settings.supabase_url}/rest/v1/customer_profiles"
     params = {
         "user_id": f"eq.{user_id}",
-        "select": "erp_clt_prov,is_active",
+        "select": "erp_clt_prov,is_active,cta_contable",
     }
 
     try:
@@ -120,6 +121,7 @@ async def fetch_customer_profile(user_id: str) -> Optional[CustomerProfile]:
             return CustomerProfile(
                 erp_clt_prov=row.get("erp_clt_prov"),
                 is_active=row.get("is_active", False),
+                cta_contable=row.get("cta_contable"),  # may be None
             )
 
     except httpx.HTTPStatusError as e:
