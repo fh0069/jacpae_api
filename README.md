@@ -1,8 +1,9 @@
 # jacpae_api
 
 API REST desarrollada con FastAPI. Proporciona acceso autenticado a facturas en PDF,
-gestiona notificaciones internas de tipo giro, reparto y oferta, y sirve el PDF de la
-oferta comercial activa. Está diseñada para ser consumida por una aplicación móvil Flutter.
+gestiona notificaciones internas de tipo giro, reparto y oferta, sirve el PDF de la
+oferta comercial activa, expone el libro mayor financiero del cliente y el listado fiscal
+de IVA sobre facturas emitidas. Está diseñada para ser consumida por una aplicación móvil Flutter.
 
 No incluye frontend, panel de administración ni sistema de notificaciones push.
 
@@ -55,7 +56,7 @@ PDFs facturas + ofertas
 | Pool | Getter | Schema | minsize / maxsize | Usado por |
 |---|---|---|---|---|
 | Ventas | `get_pool()` | `MARIADB_DB` | 1 / 10 | Facturas, reparto |
-| Contabilidad | `get_pool_finan()` | `MARIADB_FINAN_DB` | 1 / 5 | Giros |
+| Contabilidad | `get_pool_finan()` | `MARIADB_FINAN_DB` | 1 / 5 | Giros, ledger financiero, listado VAT |
 
 Los pools se crean en el primer uso y se cierran en el shutdown del servidor.
 
@@ -73,6 +74,8 @@ Los pools se crean en el primer uso y se cierran en el shutdown del servidor.
 | GET | `/offers/current` | JWT | Descarga el PDF de la oferta activa. `404` si no hay ninguna. |
 | GET | `/notifications` | JWT | Lista notificaciones del usuario autenticado, ordenadas por `created_at DESC`. Params: `limit` (1–100, def. 50), `offset`. |
 | PATCH | `/notifications/{notification_id}/read` | JWT | Marca una notificación como leída. `204` OK, `404` no encontrada. |
+| GET | `/finance/ledger` | JWT | Movimientos contables del cliente con saldo acumulado arrastrado. Params: `start_date`, `end_date` (ISO 8601). |
+| GET | `/invoices/vat-list` | JWT | Listado fiscal de facturas emitidas del cliente con totales agregados. Params: `start_date`, `end_date` (ISO 8601). |
 
 Los endpoints de debug (`/debug/*`) solo se registran cuando `APP_ENV=development`.
 
@@ -137,6 +140,78 @@ Respuesta `200` (array):
   }
 ]
 ```
+
+### Contrato de `GET /finance/ledger`
+
+Parámetros de query: `start_date` y `end_date` (formato ISO 8601, ej. `2025-01-01`).
+
+El backend resuelve `customer_profiles.cta_contable` desde el JWT (nunca se acepta como
+parámetro del cliente). Calcula el saldo acumulado desde el inicio del ejercicio
+correspondiente a `start_date`. Devuelve únicamente los movimientos dentro del rango
+`[start_date, end_date]`, con el saldo correcto ya arrastrado en cada línea.
+
+Respuesta `200` (objeto):
+
+```json
+{
+  "saldo_inicial": 1500.00,
+  "movimientos": [
+    {
+      "fecha": "2025-03-01",
+      "concepto": "Fra. FA-000123",
+      "debe": 1452.00,
+      "haber": 0.00,
+      "saldo": 2952.00
+    }
+  ]
+}
+```
+
+| Código | Condición |
+|---|---|
+| `200` | Respuesta con saldo y movimientos |
+| `401` | Token JWT ausente, expirado o con firma inválida |
+| `403` | Perfil no existe o `is_active=false` |
+| `503` | Supabase no disponible al resolver el perfil o MariaDB no disponible |
+
+### Contrato de `GET /invoices/vat-list`
+
+Parámetros de query: `start_date` y `end_date` (formato ISO 8601).
+
+El backend resuelve `customer_profiles.cta_contable` desde el JWT. Devuelve el listado
+fiscal de facturas emitidas del cliente en el rango indicado.
+
+Respuesta `200` (objeto):
+
+```json
+{
+  "items": [
+    {
+      "fecha_fra": "2025-03-01",
+      "num_fra": "FA-000123",
+      "base_imp": 1200.00,
+      "tipo_iva": 21.0,
+      "cuota_iva": 252.00,
+      "tipo_recargo": 0.0,
+      "cuota_recargo": 0.00,
+      "imp_total": 1452.00
+    }
+  ],
+  "totals": {
+    "total_base": 1200.00,
+    "total_iva": 252.00,
+    "total_recargo": 0.00,
+    "total_factura": 1452.00
+  }
+}
+```
+
+| Código | Condición |
+|---|---|
+| `200` | Respuesta con items y totals |
+| `401` | Token JWT ausente, expirado o con firma inválida |
+| `403` | Perfil no existe o `is_active=false` |
+| `503` | Supabase no disponible al resolver el perfil o MariaDB no disponible |
 
 ---
 
