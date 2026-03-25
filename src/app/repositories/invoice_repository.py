@@ -1,6 +1,7 @@
 """
 Invoice repository - Data access layer for invoice queries.
 """
+from datetime import date
 from typing import Any
 
 from ..core.mariadb import execute_query
@@ -70,6 +71,63 @@ async def list_invoices(
         "offset": offset,
     }
     return await execute_query(INVOICES_SQL, params)
+
+
+RECENT_INVOICES_SQL = """
+SELECT
+  c.ejercicio_factura,
+  c.clave_factura,
+  c.documento_factura,
+  c.serie_factura,
+  c.numero_factura,
+  CONCAT(c.documento_factura, '-', c.numero_factura) AS factura,
+  MAX(c.fecha_factura) AS fecha
+FROM cab_venta c
+INNER JOIN pie_venta_e p ON
+  c.ejercicio_factura = p.ejercicio AND
+  c.clave_factura = p.clave AND
+  c.documento_factura = p.documento AND
+  c.serie_factura = p.serie AND
+  c.numero_factura = p.numero
+WHERE
+  c.fecha_factura BETWEEN %(from_date)s AND %(to_date)s
+  AND c.clave_factura = 'B'
+  AND c.documento_factura NOT LIKE 'J%%'
+  AND c.clt_prov = %(clt_prov)s
+GROUP BY
+  c.ejercicio_factura,
+  c.clave_factura,
+  c.documento_factura,
+  c.serie_factura,
+  c.numero_factura
+ORDER BY
+  fecha ASC,
+  factura ASC
+"""
+
+
+async def fetch_invoices_by_clt_prov(
+    clt_prov: str,
+    from_date: date,
+    to_date: date,
+) -> list[dict[str, Any]]:
+    """
+    Fetch recently issued invoices for a customer within a date range.
+
+    Args:
+        clt_prov: Customer code from ERP
+        from_date: Start of window (inclusive)
+        to_date: End of window (inclusive)
+
+    Returns:
+        List of invoice dicts ordered by fecha ASC.
+    """
+    params = {
+        "clt_prov": clt_prov,
+        "from_date": from_date,
+        "to_date": to_date,
+    }
+    return await execute_query(RECENT_INVOICES_SQL, params)
 
 
 OWNERSHIP_SQL = """

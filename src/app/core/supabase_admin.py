@@ -47,6 +47,12 @@ class CustomerProfileReparto:
 
 
 @dataclass
+class CustomerProfileInvoice:
+    user_id: str
+    erp_clt_prov: str
+
+
+@dataclass
 class NotificationInsert:
     user_id: str
     type: str
@@ -222,6 +228,49 @@ async def fetch_reparto_profiles() -> list[CustomerProfileReparto]:
         return []
     except (httpx.TimeoutException, httpx.RequestError) as e:
         logger.error("Supabase unavailable (reparto_profiles): %s", type(e).__name__)
+        raise SupabaseUnavailableError("Supabase request failed")
+
+
+async def fetch_invoice_profiles() -> list[CustomerProfileInvoice]:
+    """
+    Fetch all customer profiles that have invoice notifications enabled.
+
+    Filters: is_active=true, avisar_factura_emitida=true, erp_clt_prov not null.
+    """
+    if not _check_config():
+        return []
+
+    url = f"{settings.supabase_url}/rest/v1/customer_profiles"
+    params = {
+        "select": "user_id,erp_clt_prov",
+        "is_active": "eq.true",
+        "avisar_factura_emitida": "eq.true",
+        "erp_clt_prov": "not.is.null",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(url, params=params, headers=_get_headers())
+            response.raise_for_status()
+            data = response.json()
+
+            return [
+                CustomerProfileInvoice(
+                    user_id=row["user_id"],
+                    erp_clt_prov=row["erp_clt_prov"],
+                )
+                for row in data
+                if row.get("erp_clt_prov")
+            ]
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase fetch_invoice_profiles error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+        return []
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error("Supabase unavailable (invoice_profiles): %s", type(e).__name__)
         raise SupabaseUnavailableError("Supabase request failed")
 
 
