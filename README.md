@@ -5,7 +5,7 @@ gestiona notificaciones internas de tipo giro, reparto y oferta, sirve el PDF de
 oferta comercial activa, expone el libro mayor financiero del cliente y el listado fiscal
 de IVA sobre facturas emitidas. Está diseñada para ser consumida por una aplicación móvil Flutter.
 
-No incluye frontend, panel de administración ni sistema de notificaciones push.
+Incluye envío de notificaciones push vía FCM como señal de activación (wake-up). El push es una capacidad degradable: si Firebase no está configurado, la API arranca y los jobs siguen funcionando sin error.
 
 ---
 
@@ -74,6 +74,7 @@ Los pools se crean en el primer uso y se cierran en el shutdown del servidor.
 | GET | `/offers/current` | JWT | Descarga el PDF de la oferta activa. `404` si no hay ninguna. |
 | GET | `/notifications` | JWT | Lista notificaciones del usuario autenticado, ordenadas por `created_at DESC`. Params: `limit` (1–100, def. 50), `offset`. |
 | PATCH | `/notifications/{notification_id}/read` | JWT | Marca una notificación como leída. `204` OK, `404` no encontrada. |
+| POST | `/push/register` | JWT | Registra o reactiva un token FCM del dispositivo del usuario autenticado. |
 | GET | `/finance/ledger` | JWT | Movimientos contables del cliente con saldo acumulado arrastrado. Params: `start_date`, `end_date` (ISO 8601). |
 | GET | `/invoices/vat-list` | JWT | Listado fiscal de facturas emitidas del cliente con totales agregados. Params: `start_date`, `end_date` (ISO 8601). |
 
@@ -294,6 +295,58 @@ como deduplicación, no como error.
 
 ---
 
+## Push FCM
+
+### Modo degradado
+
+Si `FIREBASE_CREDENTIALS_PATH` o `FIREBASE_PROJECT_ID` no están configurados, el push
+queda silenciosamente desactivado. Los jobs siguen ejecutándose y las notificaciones se
+persisten en Supabase con normalidad. Se emite un único WARNING en los logs al primer
+intento de envío; las llamadas siguientes no emiten warning adicional.
+
+### Tabla `push_devices` (Supabase)
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | uuid | Clave primaria, generada automáticamente |
+| `user_id` | uuid | Identificador del usuario (coincide con `sub` del JWT) |
+| `device_token` | text UNIQUE | Token FCM del dispositivo |
+| `platform` | text | `android` o `ios` |
+| `is_active` | bool | `false` = token desactivado por FCM. No se borra. |
+| `created_at` | timestamptz | Generado automáticamente al insertar |
+| `updated_at` | timestamptz | Actualizado al reactivar un token existente |
+
+### Tokens inválidos
+
+Cuando FCM responde con `UNREGISTERED` o `INVALID_ARGUMENT`, el token se marca
+`is_active=false` en `push_devices`. No se elimina. Se mantiene trazabilidad. El
+dispositivo puede registrar un nuevo token en cualquier momento vía `POST /push/register`.
+
+### Despliegue en Windows Server 2016
+
+- El JSON de cuenta de servicio Firebase **nunca debe estar en el repositorio ni en el ZIP**.
+- Ruta recomendada en el servidor: `C:\jacpae\secrets\firebase-service-account.json`
+- Permisos: solo lectura para la cuenta de servicio Windows que ejecuta la API.
+- Configurar en `.env` del servidor:
+  ```
+  FIREBASE_CREDENTIALS_PATH=C:\jacpae\secrets\firebase-service-account.json
+  FIREBASE_PROJECT_ID=jacpae-prod
+  ```
+- No requiere cambios en scripts de arranque ni en `make_release_zip.py` (la ruta es externa al proyecto).
+
+### Contadores de push en logs de job
+
+| Contador | Significado |
+|---|---|
+| `push_sent` | Tokens que han recibido el mensaje correctamente (HTTP 200 de FCM) |
+| `push_failed` | Errores transitorios o no reconocidos (red, timeout, error FCM desconocido). No implica desactivación del token. |
+| `push_invalidated` | Tokens confirmados inválidos por FCM (`UNREGISTERED`/`INVALID_ARGUMENT`). Desactivados en `push_devices`. |
+
+Un `push_failed > 0` aislado no requiere acción. Un `push_invalidated > 0` es
+comportamiento normal (app desinstalada, dispositivo cambiado).
+
+---
+
 ## Estructura de almacenamiento en NAS
 
 `PDF_BASE_DIR` define la raíz del almacenamiento de PDFs. En desarrollo apunta a un
@@ -372,6 +425,8 @@ ejecutan (el módulo registra un warning y retorna vacío sin lanzar excepción)
 | `OFFER_JOB_ENABLED` | `false` | Activa el job de notificaciones de ofertas |
 | `OFFER_JOB_HOUR` | `8` | Hora de ejecución del job de ofertas |
 | `OFFER_JOB_MINUTE` | `5` | Minuto de ejecución del job de ofertas |
+| `FIREBASE_CREDENTIALS_PATH` | `None` | Ruta absoluta al JSON de cuenta de servicio Firebase. Si no se configura, el push queda desactivado sin error. |
+| `FIREBASE_PROJECT_ID` | `None` | ID del proyecto Firebase (p. ej. `jacpae-prod`). Debe coincidir con el JSON de credenciales. |
 
 ---
 
@@ -408,6 +463,14 @@ o `is_active=false`, el endpoint devuelve `403`.
 | INSERT | Sin policy de cliente. Solo el backend puede insertar usando `SERVICE_ROLE_KEY` |
 | DELETE | Sin policy — denegado por defecto con RLS activo |
 
+### Credenciales Firebase
+
+El archivo JSON de cuenta de servicio Firebase contiene una clave privada RSA. Nunca
+debe incluirse en el repositorio, en el ZIP de distribución ni aparecer en logs. La
+ubicación recomendada es fuera del directorio del proyecto (`C:\jacpae\secrets\`), lo
+que garantiza que `make_release_zip.py` no lo incluya. La ruta se configura únicamente
+en el `.env` del servidor.
+
 ### Service Role Key
 
 `SUPABASE_SERVICE_ROLE_KEY` se usa exclusivamente en el backend para leer
@@ -426,6 +489,7 @@ Las migraciones se aplican manualmente en el SQL Editor de Supabase, en orden nu
 | `001_customer_profiles_giro_columns.sql` | Añade `cta_contable`, `avisar_giro` y `dias_aviso_giro` a `customer_profiles` |
 | `002_notifications_table.sql` | Crea la tabla `notifications` con índices y RLS. Campo de deduplicación: `source_key` |
 | `003_notifications_source_key.sql` | Migración de compatibilidad: renombra `dedup_key` → `source_key` en instalaciones previas. Idempotente. |
+| `004_push_devices.sql` | Crea la tabla `push_devices` con `device_token` (UNIQUE), `user_id`, `platform`, `is_active`, timestamps y RLS activo. |
 
 Aplicar siempre en orden. La migración `003` puede re-ejecutarse sin efecto secundario.
 
@@ -471,7 +535,7 @@ curl http://127.0.0.1:8000/openapi.json
 .venv\Scripts\python -m pytest tests/ -v
 ```
 
-Estado actual: **129 tests, 0 fallos**. Todos los tests usan mocks; no requieren
+Estado actual: todos los tests pasan. Todos los tests usan mocks; no requieren
 conexión a MariaDB ni a Supabase.
 
 | Módulo | Cobertura |
@@ -487,6 +551,7 @@ conexión a MariaDB ni a Supabase.
 | `test_giro_repository.py` | SQL generado, parámetros, pool de contabilidad |
 | `test_reparto_job.py` | Cálculo de días laborables, construcción de notificación, deduplicación |
 | `test_reparto_repository.py` | SQL generado, parámetros, pool de ventas |
+| `test_fcm_service.py` | Configuración degradada, token OAuth2, parsing de errores FCM, envío por token, send_push_to_user completo |
 
 No existe suite de tests para `src/app/api/me.py`.
 
@@ -497,8 +562,11 @@ No existe suite de tests para `src/app/api/me.py`.
 - El cálculo de días laborables en el job de reparto excluye únicamente sábados y
   domingos. No incorpora festivos.
 - No existe endpoint individual `GET /invoices/{id}` ni `GET /notifications/{id}`.
-- Las notificaciones se almacenan en Supabase. No existe mecanismo de envío push
-  (FCM, APNs u otro). El cliente las consulta mediante `GET /notifications`.
+- El push FCM no incorpora scheduling de reintentos. Un fallo transitorio de red no
+  se reintenta; se registra en `push_failed` y el usuario recibe la notificación en
+  la próxima ejecución del job.
+- Las notificaciones se almacenan en Supabase. El cliente las consulta mediante
+  `GET /notifications`.
 - No existe panel de administración ni endpoints protegidos por rol admin.
 - No existe gestión de tokens de refresco en la API; se delega a Supabase Auth.
 - El schema de contabilidad (`MARIADB_FINAN_DB`) comparte host, usuario y contraseña

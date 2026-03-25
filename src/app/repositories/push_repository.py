@@ -146,3 +146,94 @@ async def update_device(device_id: str, user_id: str) -> None:
     except (httpx.TimeoutException, httpx.RequestError) as e:
         logger.error("Supabase unavailable (update_device): %s", type(e).__name__)
         raise SupabaseUnavailableError("Supabase request failed")
+
+
+async def fetch_active_devices_by_user_id(user_id: str) -> list[dict]:
+    """
+    Return list of {"device_token": str} dicts for active devices of a user.
+
+    Returns an empty list if the user has no active devices.
+    Raises SupabaseUnavailableError on 5xx / network error / missing config.
+
+    Supabase REST:
+      GET /rest/v1/push_devices
+      params: user_id=eq.{user_id}, is_active=eq.true, select=device_token
+    """
+    if not _check_config():
+        raise SupabaseUnavailableError("Supabase admin configuration missing")
+
+    url = f"{settings.supabase_url}/rest/v1/push_devices"
+    params = {
+        "user_id": f"eq.{user_id}",
+        "is_active": "eq.true",
+        "select": "device_token",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url, params=params, headers=_get_headers())
+            response.raise_for_status()
+            return response.json()
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase fetch_active_devices_by_user_id error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+        return []
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error(
+            "Supabase unavailable (fetch_active_devices_by_user_id): %s",
+            type(e).__name__,
+        )
+        raise SupabaseUnavailableError("Supabase request failed")
+
+
+async def deactivate_device_by_token(device_token: str) -> None:
+    """
+    Set is_active=False for the given device_token. Row is preserved.
+
+    Preserves the row for auditability (history of invalid tokens).
+    Updates updated_at to now(). Does NOT delete the row.
+    Raises SupabaseUnavailableError on 5xx / network error.
+
+    Supabase REST:
+      PATCH /rest/v1/push_devices
+      params: device_token=eq.{device_token}
+      body: {is_active: false, updated_at: <ISO now>}
+      headers: Prefer: return=minimal
+    """
+    if not _check_config():
+        raise SupabaseUnavailableError("Supabase admin configuration missing")
+
+    url = f"{settings.supabase_url}/rest/v1/push_devices"
+    now = datetime.now(timezone.utc).isoformat()
+    params = {"device_token": f"eq.{device_token}"}
+    headers = {
+        **_get_headers(),
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+    payload = {
+        "is_active": False,
+        "updated_at": now,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.patch(
+                url, params=params, json=payload, headers=headers
+            )
+            response.raise_for_status()
+
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.error("Supabase deactivate_device_by_token error: %s", status)
+        if status >= 500:
+            raise SupabaseUnavailableError(f"Supabase returned {status}")
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        logger.error(
+            "Supabase unavailable (deactivate_device_by_token): %s",
+            type(e).__name__,
+        )
+        raise SupabaseUnavailableError("Supabase request failed")

@@ -55,5 +55,9 @@ class Settings(BaseSettings):
     offer_job_hour: int = 8
     offer_job_minute: int = 5
 
+    # Firebase / FCM push (optional — FCM disabled if either is unset)
+    firebase_credentials_path: str | None = None
+    firebase_project_id: str | None = None
+
 
 settings = Settings()

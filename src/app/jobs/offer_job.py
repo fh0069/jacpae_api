@@ -5,6 +5,9 @@ Checks for an active offer PDF on the NAS filesystem and, if one is found,
 inserts a deduplicated notification for every active customer profile in
 Supabase. The source_key ensures the notification is sent at most once per
 offer expiry date regardless of how many times the job runs.
+
+When a new notification is inserted for a user, a single FCM push is
+dispatched as a wake-up signal. A push failure never affects persistence.
 """
 import logging
 from datetime import date
@@ -16,6 +19,7 @@ from ..core.supabase_admin import (
     fetch_active_user_ids,
     insert_notification,
 )
+from ..services.fcm_service import send_push_to_user
 from ..services.offer_service import get_active_offer_path
 
 logger = logging.getLogger(__name__)
@@ -50,13 +54,18 @@ async def run_offer_job() -> dict[str, int]:
     Main entry point for the daily offer notification job.
 
     Returns:
-        Summary dict with keys: total_users, inserted, deduped, errors
+        Summary dict with keys:
+          total_users, inserted, deduped, errors,
+          push_sent, push_failed, push_invalidated
     """
     summary: dict[str, int] = {
         "total_users": 0,
         "inserted": 0,
         "deduped": 0,
         "errors": 0,
+        "push_sent": 0,
+        "push_failed": 0,
+        "push_invalidated": 0,
     }
 
     offer_path = await get_active_offer_path()
@@ -87,6 +96,15 @@ async def run_offer_job() -> dict[str, int]:
             was_inserted = await insert_notification(notification)
             if was_inserted:
                 summary["inserted"] += 1
+                push_result = await send_push_to_user(
+                    user_id=user_id,
+                    title="Tienes notificaciones nuevas",
+                    body="",
+                    data={"type": "oferta"},
+                )
+                summary["push_sent"] += push_result.sent
+                summary["push_failed"] += push_result.failed
+                summary["push_invalidated"] += push_result.invalidated
             else:
                 summary["deduped"] += 1
         except SupabaseUnavailableError:
@@ -97,10 +115,14 @@ async def run_offer_job() -> dict[str, int]:
             summary["errors"] += 1
 
     logger.info(
-        "Offer job completed: users=%d inserted=%d deduped=%d errors=%d",
+        "Offer job completed: users=%d inserted=%d deduped=%d errors=%d "
+        "push_sent=%d push_failed=%d push_invalidated=%d",
         summary["total_users"],
         summary["inserted"],
         summary["deduped"],
         summary["errors"],
+        summary["push_sent"],
+        summary["push_failed"],
+        summary["push_invalidated"],
     )
     return summary
