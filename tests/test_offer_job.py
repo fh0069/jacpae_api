@@ -83,7 +83,13 @@ class TestRunOfferJob:
 
         result = await run_offer_job()
 
-        assert result == {"total_users": 0, "inserted": 0, "deduped": 0, "errors": 0}
+        assert result["total_users"] == 0
+        assert result["inserted"] == 0
+        assert result["deduped"] == 0
+        assert result["errors"] == 0
+        assert result["push_sent"] == 0
+        assert result["push_failed"] == 0
+        assert result["push_invalidated"] == 0
 
     @pytest.mark.asyncio
     async def test_offer_three_users_all_inserted(self, monkeypatch):

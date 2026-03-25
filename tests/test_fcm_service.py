@@ -482,7 +482,8 @@ class TestGetAccessToken:
 
     @pytest.fixture(autouse=True)
     def mock_request_class(self, monkeypatch):
-        """Patch Request so no real requests.Session is created during tests."""
+        """Patch Request and reset cached credentials."""
+        monkeypatch.setattr(fcm_module, "_credentials", None)
         monkeypatch.setattr(fcm_module, "Request", MagicMock)
 
     @pytest.mark.asyncio
