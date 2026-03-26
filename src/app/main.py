@@ -91,6 +91,27 @@ def _setup_scheduler():
             settings.offer_job_hour,
             settings.offer_job_minute,
         )
+    
+    if settings.invoice_job_enabled:
+        from .jobs.invoice_job import run_invoice_job
+
+        _scheduler.add_job(
+            run_invoice_job,
+            trigger=CronTrigger(
+                hour=settings.invoice_job_hour,
+                minute=settings.invoice_job_minute,
+                timezone="Europe/Madrid",
+            ),
+            id="invoice_job_daily",
+            name="Daily invoice notification job",
+            replace_existing=True,
+        )
+
+        logger.info(
+            "Invoice job scheduled at %02d:%02d Europe/Madrid",
+            settings.invoice_job_hour,
+            settings.invoice_job_minute,
+        )
 
     _scheduler.start()
 

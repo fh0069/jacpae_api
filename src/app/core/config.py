@@ -47,13 +47,19 @@ class Settings(BaseSettings):
     # Reparto notification job
     reparto_job_enabled: bool = False
     reparto_job_hour: int = 8
-    reparto_job_minute: int = 0
+    reparto_job_minute: int = 3
     reparto_default_dias_aviso: int = 2
 
     # Offer notification job
     offer_job_enabled: bool = False
     offer_job_hour: int = 8
-    offer_job_minute: int = 5
+    offer_job_minute: int = 6
+
+    # Invoice notification job
+    invoice_job_enabled: bool = False
+    invoice_job_hour: int = 8
+    invoice_job_minute: int = 9
+    invoice_lookback_days: int = 5
 
     # Firebase / FCM push (optional — FCM disabled if either is unset)
     firebase_credentials_path: str | None = None

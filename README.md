@@ -322,6 +322,8 @@ Cuando FCM responde con `UNREGISTERED` o `INVALID_ARGUMENT`, el token se marca
 `is_active=false` en `push_devices`. No se elimina. Se mantiene trazabilidad. El
 dispositivo puede registrar un nuevo token en cualquier momento vía `POST /push/register`.
 
+El payload push no contiene datos de negocio sensibles. Actúa únicamente como señal de activación ("wake-up") para que la app sincronice datos desde la API.
+
 ### Despliegue en Windows Server 2016
 
 - El JSON de cuenta de servicio Firebase **nunca debe estar en el repositorio ni en el ZIP**.
