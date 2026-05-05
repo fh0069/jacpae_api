@@ -13,6 +13,7 @@ import asyncio
 import logging
 from datetime import date
 from io import BytesIO
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -20,6 +21,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
+from reportlab.lib import colors as rl_colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from ..core.auth import get_current_user, User
 from ..core.date_utils import validate_date_range
@@ -27,6 +34,8 @@ from ..core.supabase_admin import fetch_customer_profile, SupabaseUnavailableErr
 from ..services.invoice_reporting_service import get_vat_invoice_list
 
 logger = logging.getLogger(__name__)
+
+_LOGO_PATH = Path(__file__).parent.parent / "assets" / "images" / "logo_santiago_vargas.png"
 
 router = APIRouter(tags=["invoices"])
 
@@ -249,6 +258,237 @@ async def export_vat_invoice_list(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
+
+
+# ── PDF helper ─────────────────────────────────────────────────
+
+def _build_pdf(data: dict, start_date: date, end_date: date) -> BytesIO:
+    _ORANGE      = rl_colors.HexColor("#F28C28")
+    _ORANGE_SOFT = rl_colors.HexColor("#FEF0DB")
+    _STRIPE      = rl_colors.HexColor("#FDF3E7")
+
+    def _fmt_currency(v: float) -> str:
+        negative = v < 0
+        integer, decimal = f"{abs(v):,.2f}".split(".")
+        result = f"{integer.replace(',', '.')},{decimal} €"
+        return f"-{result}" if negative else result
+
+    def _fmt_percent(v: float) -> str:
+        return f"{v:.2f}".replace(".", ",") + " %"
+
+    def _fmt_date(d) -> str:
+        if hasattr(d, "strftime"):
+            return d.strftime("%d-%m-%Y")
+        if isinstance(d, str) and len(d) == 10:
+            return f"{d[8:10]}-{d[5:7]}-{d[0:4]}"
+        return str(d)
+
+    # (visible header, field, width_mm, formatter)
+    COLUMNS = [
+        ("Fecha",          "fecha_fra",    24, _fmt_date),
+        ("Nº Fra.",        "num_fra",      30, str),
+        ("Base Imponible", "base_imp",     32, _fmt_currency),
+        ("% IVA",          "tipo_iva",     18, _fmt_percent),
+        ("Importe IVA",    "cuota_iva",    30, _fmt_currency),
+        ("R.E.",           "tipo_recargo", 18, _fmt_percent),
+        ("Importe RE",     "cuota_recargo",30, _fmt_currency),
+        ("Total",          "imp_total",    30, _fmt_currency),
+    ]
+    col_widths  = [col[2] * mm for col in COLUMNS]
+    table_total = sum(col_widths)          # 212 mm
+    last_col_w  = col_widths[-1]           # 30 mm  (Total column)
+
+    # ── Document styles ──────────────────────────────────────────
+    base = getSampleStyleSheet()
+    header_info_style = ParagraphStyle(
+        "pdf_header_info",
+        parent=base["Normal"],
+        fontSize=9,
+        fontName="Helvetica",
+        leading=14,
+    )
+    client_style = ParagraphStyle(
+        "pdf_client",
+        parent=base["Normal"],
+        fontSize=9,
+        fontName="Helvetica-Bold",
+        spaceAfter=4 * mm,
+    )
+
+    # ── Logo ─────────────────────────────────────────────────────
+    img_r = ImageReader(str(_LOGO_PATH))
+    img_px_w, img_px_h = img_r.getSize()
+    logo_w = 55 * mm
+    logo_h = logo_w * img_px_h / img_px_w
+    logo_img = Image(str(_LOGO_PATH), width=logo_w, height=logo_h)
+
+    # ── Header table: logo left | title + period right ───────────
+    period_str = f"{start_date.strftime('%d-%m-%Y')} – {end_date.strftime('%d-%m-%Y')}"
+    header_para = Paragraph(
+        f'<font size="12"><b>Listado fiscal de facturas</b></font>'
+        f'<br/><br/>Periodo: {period_str}',
+        header_info_style,
+    )
+    logo_col_w = logo_w + 5 * mm
+    header_table = Table(
+        [[logo_img, header_para]],
+        colWidths=[logo_col_w, table_total - logo_col_w],
+    )
+    header_table.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+
+    # ── Client block ─────────────────────────────────────────────
+    cliente = next(
+        (str(item.get("cliente", "")) for item in data["items"] if item.get("cliente")),
+        "",
+    )
+    client_block = Table(
+        [[Paragraph(f"Cliente: {cliente if cliente else '—'}", client_style)]],
+        colWidths=[table_total],
+    )
+    client_block.setStyle(TableStyle([
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+
+    # ── Main table ───────────────────────────────────────────────
+    table_data = [[col[0] for col in COLUMNS]]
+    for item in data["items"]:
+        table_data.append([col[3](item[col[1]]) for col in COLUMNS])
+    n_data = len(data["items"])
+
+    ts_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0),      _ORANGE),
+        ("TEXTCOLOR",  (0, 0), (-1, 0),      rl_colors.white),
+        ("FONTNAME",   (0, 0), (-1, 0),      "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0),      8),
+        ("ALIGN",      (0, 0), (-1, 0),      "CENTER"),
+        ("VALIGN",     (0, 0), (-1, -1),     "MIDDLE"),
+        ("FONTNAME",   (0, 1), (-1, -1),     "Helvetica"),
+        ("FONTSIZE",   (0, 1), (-1, -1),     8),
+        ("GRID",       (0, 0), (-1, n_data), 0.3, rl_colors.grey),
+        ("LINEBELOW",  (0, 0), (-1, 0),      0.7, rl_colors.black),
+        ("ROWHEIGHT",  (0, 0), (-1, -1),     6 * mm),
+        ("ALIGN", (0, 1), (1, n_data), "CENTER"),
+        ("ALIGN", (2, 1), (2, n_data), "RIGHT"),
+        ("ALIGN", (3, 1), (3, n_data), "CENTER"),
+        ("ALIGN", (4, 1), (4, n_data), "RIGHT"),
+        ("ALIGN", (5, 1), (5, n_data), "CENTER"),
+        ("ALIGN", (6, 1), (7, n_data), "RIGHT"),
+    ]
+    for i in range(1, n_data + 1):
+        if i % 2 == 0:
+            ts_cmds.append(("BACKGROUND", (0, i), (-1, i), _STRIPE))
+
+    main_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    main_table.setStyle(TableStyle(ts_cmds))
+
+    # ── Totals table — aligned with main table ───────────────────
+    # label col = table_total - last_col_w so value col aligns with "Total" column
+    totals = data["totals"]
+    n_totals = len(_TOTALS_LABELS)
+    totals_data = [
+        [label, _fmt_currency(float(totals[key]))]
+        for key, label in _TOTALS_LABELS
+    ]
+    totals_table = Table(
+        totals_data,
+        colWidths=[table_total - last_col_w, last_col_w],
+    )
+    totals_table.setStyle(TableStyle([
+        ("FONTNAME",      (0, 0), (-1, -1),          "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1),          8),
+        ("ALIGN",         (0, 0), (0, -1),           "RIGHT"),
+        ("ALIGN",         (1, 0), (1, -1),           "RIGHT"),
+        ("VALIGN",        (0, 0), (-1, -1),          "MIDDLE"),
+        ("ROWHEIGHT",     (0, 0), (-1, -1),          6 * mm),
+        ("TOPPADDING",    (0, 0), (-1, -1),          3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1),          3),
+        ("RIGHTPADDING",  (0, 0), (-1, -1),          4),
+        ("LINEABOVE",     (0, 0), (-1, 0),           0.7, rl_colors.black),
+        # Highlight Total Factura (last row)
+        ("BACKGROUND",    (0, n_totals - 1), (-1, n_totals - 1), _ORANGE_SOFT),
+    ]))
+
+    # ── Build document ───────────────────────────────────────────
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+    )
+    doc.build([
+        header_table,
+        Spacer(1, 4 * mm),
+        client_block,
+        main_table,
+        Spacer(1, 3 * mm),
+        totals_table,
+    ])
+    buf.seek(0)
+    return buf
+
+
+# ── PDF export endpoint ────────────────────────────────────────
+
+@router.get("/invoices/vat-list/export/pdf")
+async def export_vat_invoice_list_pdf(
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    try:
+        validate_date_range(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    user_id = current_user.sub
+
+    try:
+        profile = await fetch_customer_profile(user_id)
+    except SupabaseUnavailableError:
+        raise HTTPException(status_code=503, detail="Upstream auth/profile service unavailable")
+
+    if profile is None:
+        raise HTTPException(status_code=403, detail="No customer profile found")
+
+    if not profile.is_active:
+        raise HTTPException(status_code=403, detail="Customer profile is not active")
+
+    if not profile.cta_contable:
+        raise HTTPException(status_code=403, detail="Customer profile has no accounting account configured")
+
+    try:
+        data = await get_vat_invoice_list(
+            cta_contable=profile.cta_contable,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except Exception as e:
+        logger.error("Database error fetching VAT invoice list for PDF export: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Error fetching VAT invoice list")
+
+    buf = await asyncio.to_thread(_build_pdf, data, start_date, end_date)
+
+    filename = f"vat_invoices_{start_date}_{end_date}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Access-Control-Expose-Headers": "Content-Disposition",

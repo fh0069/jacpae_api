@@ -77,6 +77,7 @@ async def get_vat_invoice_list(
             {
                 "fecha_fra": row["fecha_fra"],
                 "num_fra": row["num_fra"],
+                "cliente": row.get("cliente", ""),
                 "base_imp": base_imp,
                 "tipo_iva": tipo_iva,
                 "cuota_iva": cuota_iva,

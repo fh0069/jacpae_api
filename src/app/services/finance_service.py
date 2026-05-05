@@ -106,6 +106,7 @@ async def get_ledger(
             {
                 "fecha": row_date,
                 "concepto": row["concepto"] or "",
+                "cliente": row.get("cliente", ""),
                 "importe_debe": importe_debe,
                 "importe_haber": importe_haber,
                 "saldo": running_saldo,

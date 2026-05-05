@@ -10,11 +10,15 @@ from ..core.mariadb import execute_query, get_pool_finan
 
 LEDGER_SQL = """
 SELECT
+    c.NOMBRE    AS cliente,
     d.FECHA     AS fecha,
     d.CONCEPTO  AS concepto,
     d.IMPORTE   AS importe,
     d.DEBE      AS debe
 FROM diario_e d
+INNER JOIN datoscp c ON
+    d.EMPRESA = c.EMPRESA
+    AND d.NCUENTA = c.NCUENTA
 WHERE
     d.EMPRESA = 1
     AND d.DIARIO = '00'

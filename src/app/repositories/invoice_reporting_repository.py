@@ -14,6 +14,7 @@ VAT_LIST_SQL = """
 SELECT
     i.FECHA         AS fecha_fra,
     i.NUM_FACTURA   AS num_fra,
+    i.CONCEPTO      AS cliente,
     i.BASE          AS base_imp,
     t.TIPO_IVA      AS tipo_iva,
     i.CUOTA         AS cuota_iva,
